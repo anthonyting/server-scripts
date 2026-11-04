@@ -18,14 +18,24 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: country-ip-blocklist/go.mod
           cache: true
+          cache-dependency-path: country-ip-blocklist/go.sum
 
       - name: Run tests
+        working-directory: country-ip-blocklist
         run: go test ./...
 
+      - name: Test Windows Firewall rule lifecycle
+        working-directory: country-ip-blocklist
+        env:
+          COUNTRY_IP_BLOCKLIST_FIREWALL_INTEGRATION: "1"
+        run: go test ./internal/firewall -run '^TestWindowsFirewallRuleLifecycle$' -count=1
+
       - name: Run go vet
+        working-directory: country-ip-blocklist
         run: go vet ./...
 
       - name: Build Windows executable
+        working-directory: country-ip-blocklist
         run: go build -o "$env:RUNNER_TEMP\country-ip-blocklist.exe" ./cmd/country-ip-blocklist
