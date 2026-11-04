@@ -3,6 +3,7 @@ package firewall
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"runtime"
 	"sort"
@@ -329,12 +330,20 @@ func propertyMatches(dispatch *ole.IDispatch, name string, want any) (bool, erro
 		return false, err
 	}
 	defer result.Clear()
-	value := result.Value()
+	return propertyValueMatches(name, result.Value(), want)
+}
 
+func propertyValueMatches(name string, value, want any) (bool, error) {
 	switch expected := want.(type) {
 	case string:
 		actual, ok := value.(string)
-		return ok && equalAddressLists(actual, expected), nil
+		if !ok {
+			return false, nil
+		}
+		if name == "LocalAddresses" || name == "RemoteAddresses" {
+			return equalAddressLists(actual, expected), nil
+		}
+		return actual == expected, nil
 	case bool:
 		actual, ok := value.(bool)
 		return ok && actual == expected, nil
@@ -351,14 +360,14 @@ func equalAddressLists(current, desired string) bool {
 	for _, address := range strings.Split(current, ",") {
 		address = strings.TrimSpace(address)
 		if address != "" {
-			currentSet[strings.ToLower(address)] = struct{}{}
+			currentSet[normalizeFirewallAddress(address)] = struct{}{}
 		}
 	}
 	desiredSet := make(map[string]struct{})
 	for _, address := range strings.Split(desired, ",") {
 		address = strings.TrimSpace(address)
 		if address != "" {
-			desiredSet[strings.ToLower(address)] = struct{}{}
+			desiredSet[normalizeFirewallAddress(address)] = struct{}{}
 		}
 	}
 	if len(currentSet) != len(desiredSet) {
@@ -370,6 +379,27 @@ func equalAddressLists(current, desired string) bool {
 		}
 	}
 	return true
+}
+
+func normalizeFirewallAddress(address string) string {
+	if prefix, err := netip.ParsePrefix(address); err == nil {
+		return prefix.Masked().String()
+	}
+	if addrText, maskText, ok := strings.Cut(address, "/"); ok {
+		addr, addrErr := netip.ParseAddr(addrText)
+		mask, maskErr := netip.ParseAddr(maskText)
+		if addrErr == nil && maskErr == nil && addr.Is4() && mask.Is4() {
+			maskBytes := mask.As4()
+			ones, bits := net.IPMask(maskBytes[:]).Size()
+			if bits == 32 {
+				return netip.PrefixFrom(addr, ones).Masked().String()
+			}
+		}
+	}
+	if addr, err := netip.ParseAddr(address); err == nil {
+		return netip.PrefixFrom(addr, addr.BitLen()).String()
+	}
+	return strings.ToLower(address)
 }
 
 func stringProperty(dispatch *ole.IDispatch, name string) (string, error) {
